@@ -7,9 +7,11 @@ It polls the Leanpub API for a fixed list of books and sends a desktop notificat
 ## What It Does
 
 - Polls Leanpub build status every 30 seconds
-- Watches a hard-coded list of book slugs in `leanpub_watcher.py`
+- Watches a configurable list of Leanpub book slugs
 - Sends notifications through `notify-send`
 - Fetches and caches book metadata and cover images under `~/.cache/leanpub-covers`
+- Resolves the local Dropbox root from `~/.dropbox/info.json`
+- Opens the expected Dropbox output folder for completed builds from the final notification action
 - Supports `--debug` to print redacted request/response diagnostics to stderr
 
 ## Requirements
@@ -18,18 +20,26 @@ It polls the Leanpub API for a fixed list of books and sends a desktop notificat
 - Python 3
 - The Python `requests` package
 - A Leanpub API key exposed as `LEANPUB_API_KEY`
-
-The script also assumes your Leanpub-related Dropbox content lives under `~/Dropbox/Leanpub`, although that path is not part of the current command-line interface.
+- A local Dropbox install with `~/.dropbox/info.json` available if you want the notification action to open synced output folders
 
 ## Configuration
 
-Configuration is currently done by editing `leanpub_watcher.py`:
+The watcher reads configuration from a JSON file by default:
 
-- `BOOKS`: Leanpub book slugs to watch
-- `POLL_INTERVAL`: polling interval in seconds
-- `NOTIFICATION_TIMEOUT_MS`: notification display duration
-- `DROPBOX_DIR`: base path used for local book folders
-- `CACHE_DIR`: cache directory for metadata and cover images
+`~/.config/leanpub-watcher/config.json`
+
+You can point it to a different file with `--config /path/to/config.json`.
+
+- `books`
+- `poll_interval`
+- `notification_timeout_ms`
+- `dropbox_type`
+
+The effective precedence is:
+
+- built-in defaults
+- config file
+- command-line flags
 
 ## Setup
 
@@ -45,7 +55,22 @@ Export your Leanpub API key:
 export LEANPUB_API_KEY=your_api_key_here
 ```
 
-Update the `BOOKS` list in `leanpub_watcher.py` to match the books you want to monitor.
+Create a config file such as:
+
+```json
+{
+  "books": [
+    "learning-hammerspoon",
+    "learning-cfengine",
+    "emacs-org-leanpub"
+  ],
+  "poll_interval": 30,
+  "notification_timeout_ms": 5000,
+  "dropbox_type": "personal"
+}
+```
+
+An example is included in [config.example.json](config.example.json).
 
 ## Usage
 
@@ -59,6 +84,12 @@ Run with debug logging:
 
 ```bash
 ./leanpub_watcher.py --debug
+```
+
+Run with a custom config file:
+
+```bash
+./leanpub_watcher.py --config /path/to/config.json
 ```
 
 You can also invoke it with Python directly:
@@ -77,11 +108,16 @@ Examples:
 - `Build finished successfully`
 - `Build failed`
 
+For completed builds, the notification includes an `open` action. If selected, the watcher uses `xdg-open` on the expected Leanpub Dropbox output directory:
+
+- `<Dropbox>/<slug>-output/preview` for preview jobs
+- `<Dropbox>/<slug>-output/published` for publish jobs
+
 ## Notes And Limitations
 
-- The watched books are hard-coded; there is no CLI or config file yet.
 - This is designed for a Linux notification environment and is not cross-platform.
 - If Leanpub metadata or cover downloads fail, notifications still work but may not include title/cover enhancements.
+- The Dropbox action depends on Leanpub's `job_type` field and your local Dropbox sync layout matching Leanpub's standard output folders.
 - The script runs indefinitely until stopped.
 
 ## Running As A User Service

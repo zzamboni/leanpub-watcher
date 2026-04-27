@@ -12,22 +12,24 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 API_KEY = os.environ['LEANPUB_API_KEY']
 
-BOOKS = [
-    "learning-hammerspoon",
-    "learning-cfengine",
-    "emacs-org-leanpub",
-    "lit-config"
-]
+DEFAULT_BOOKS = []
 
-POLL_INTERVAL = 30
-NOTIFICATION_TIMEOUT_MS = 5000
+DEFAULT_POLL_INTERVAL = 30
+DEFAULT_NOTIFICATION_TIMEOUT_MS = 5000
+DEFAULT_DROPBOX_TYPE = "personal"
+DEFAULT_CONFIG_PATH = os.path.expanduser("~/.config/leanpub-watcher/config.json")
 
-DROPBOX_DIR = os.path.expanduser("~/Dropbox/Leanpub")
 CACHE_DIR = os.path.expanduser("~/.cache/leanpub-covers")
 os.makedirs(CACHE_DIR, exist_ok=True)
 
+BOOKS = list(DEFAULT_BOOKS)
+POLL_INTERVAL = DEFAULT_POLL_INTERVAL
+NOTIFICATION_TIMEOUT_MS = DEFAULT_NOTIFICATION_TIMEOUT_MS
 last_status = {}
+last_status_json = {}
 DEBUG = False
+DROPBOX_PATH = None
+DROPBOX_TYPE = DEFAULT_DROPBOX_TYPE
 
 
 # -----------------------------
@@ -73,6 +75,93 @@ def cover_cache_path(slug, cover_url):
 
 def book_info_cache_path(slug):
     return os.path.join(CACHE_DIR, f"{slug}-book-info.json")
+
+
+def load_config(path):
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        raise ValueError("config file must contain a JSON object")
+    return data
+
+
+def apply_config(config):
+    global BOOKS
+    global POLL_INTERVAL
+    global NOTIFICATION_TIMEOUT_MS
+    global DROPBOX_TYPE
+    global DROPBOX_PATH
+
+    books = config.get("books")
+    if books is not None:
+        if (
+            not isinstance(books, list)
+            or not books
+            or not all(isinstance(book, str) and book for book in books)
+        ):
+            raise ValueError("'books' must be a non-empty list of strings")
+        BOOKS = books
+
+    poll_interval = config.get("poll_interval")
+    if poll_interval is not None:
+        if not isinstance(poll_interval, int) or poll_interval <= 0:
+            raise ValueError("'poll_interval' must be a positive integer")
+        POLL_INTERVAL = poll_interval
+
+    notification_timeout_ms = config.get("notification_timeout_ms")
+    if notification_timeout_ms is not None:
+        if not isinstance(notification_timeout_ms, int) or notification_timeout_ms < 0:
+            raise ValueError("'notification_timeout_ms' must be a non-negative integer")
+        NOTIFICATION_TIMEOUT_MS = notification_timeout_ms
+
+    dropbox_type = config.get("dropbox_type")
+    if dropbox_type is not None:
+        if dropbox_type not in {"personal", "business"}:
+            raise ValueError("'dropbox_type' must be 'personal' or 'business'")
+        DROPBOX_TYPE = dropbox_type
+        DROPBOX_PATH = None
+
+
+def get_dropbox_path():
+    global DROPBOX_PATH
+
+    if DROPBOX_PATH:
+        return DROPBOX_PATH
+
+    info_path = os.path.expanduser("~/.dropbox/info.json")
+    try:
+        with open(info_path, "r", encoding="utf-8") as f:
+            dropbox_data = json.load(f)
+        profile = dropbox_data.get(DROPBOX_TYPE)
+        if profile and profile.get("path"):
+            DROPBOX_PATH = profile["path"]
+            debug(f"Dropbox path ({DROPBOX_TYPE}) = {DROPBOX_PATH}")
+            return DROPBOX_PATH
+        debug(f"Dropbox profile '{DROPBOX_TYPE}' not found in {info_path}")
+    except Exception as e:
+        debug(f"Could not determine Dropbox path from {info_path}: {e}")
+
+    return None
+
+
+def get_book_output_path(slug, job_type):
+    dropbox_path = get_dropbox_path()
+    if not dropbox_path:
+        return None
+
+    subdir = ""
+    if job_type:
+        if "preview" in job_type:
+            subdir = "preview"
+        elif "publish" in job_type or "EmailPossibleReaders" in job_type:
+            subdir = "published"
+
+    path = os.path.join(dropbox_path, f"{slug}-output")
+    if subdir:
+        path = os.path.join(path, subdir)
+
+    debug(f"{slug} output path for job_type={job_type!r}: {path}")
+    return path
 
 
 def get_book_info(slug):
@@ -132,10 +221,19 @@ def get_title(slug):
         return None
     return book_info.get("title", None)
 
-def open_book_folder(slug):
-    path = os.path.join(DROPBOX_DIR, slug)
-    if os.path.exists(path):
-        subprocess.Popen(["xdg-open", path])
+
+def open_book_folder(slug, status_json):
+    path = get_book_output_path(slug, status_json.get("job_type"))
+    if not path:
+        debug(f"{slug}: no Dropbox path available")
+        return
+
+    if not os.path.exists(path):
+        debug(f"{slug}: expected output path does not exist: {path}")
+        return
+
+    debug(f"{slug}: opening Dropbox output path {path}")
+    subprocess.Popen(["xdg-open", path])
 
 
 def notify(slug, message, icon=None, extra_args=[]):
@@ -164,9 +262,11 @@ def notify(slug, message, icon=None, extra_args=[]):
     return result.stdout.strip()
 
 
-def notify_with_action(slug, message, icon=None):
+def notify_with_action(slug, message, status_json, icon=None):
     result = notify(slug, message, icon, ["-A", "open=Reveal in Dropbox folder"])
-    debug(f"Action selectd = {result}")
+    debug(f"Action selected = {result}")
+    if result == "open":
+        open_book_folder(slug, status_json)
 
 
 def get_status(slug):
@@ -224,9 +324,15 @@ def format_status(status_json):
 
 def main():
     global last_status
+    global last_status_json
     global DEBUG
 
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--config",
+        default=DEFAULT_CONFIG_PATH,
+        help=f"Path to JSON config file (default: {DEFAULT_CONFIG_PATH})",
+    )
     parser.add_argument(
         "--debug",
         action="store_true",
@@ -235,34 +341,51 @@ def main():
     args = parser.parse_args()
     DEBUG = args.debug
 
+    if os.path.exists(args.config):
+        try:
+            apply_config(load_config(args.config))
+        except Exception as e:
+            print(f"Error loading config from {args.config}: {e}", file=sys.stderr)
+            sys.exit(1)
+
     debug("debug logging enabled")
+    debug(f"config path = {args.config}")
+    debug(f"books = {BOOKS}")
     debug(f"poll interval (POLL_INTERVAL) = {POLL_INTERVAL}")
     debug(f"notification timeout (NOTIFICATION_TIMEOUT_MS) = {NOTIFICATION_TIMEOUT_MS}")
+    debug(f"dropbox type (DROPBOX_TYPE) = {DROPBOX_TYPE}")
 
     while True:
         for slug in BOOKS:
             debug(f"---------")
             data = get_status(slug)
             state = interpret(data)
-            message = format_status(data)
-            debug(f"status message: {message}")
-            
             prev = last_status.get(slug)
+            prev_status_json = last_status_json.get(slug, {})
+            if state == "unknown" and prev_status_json.get("status") == "complete":
+                message = "Build finished successfully"
+            else:
+                message = format_status(data)
+            debug(f"status message: {message}")
 
             # Avoid notifications on first run
             if prev is None:
                 last_status[slug] = message
+                last_status_json[slug] = data
                 continue
 
             if prev != message:
                 icon = get_cover(slug)
-                if message == "unknown":
-                    notify_with_action(slug, "Build finished successfully", icon)
+                if state in {"complete", "unknown"}:
+                    completion_status = dict(prev_status_json)
+                    completion_status.update(data)
+                    notify_with_action(slug, "Build finished successfully", completion_status, icon)
                 else:
                     notify(slug, message, icon)
                 last_status[slug] = message
-
-            
+                last_status_json[slug] = data
+            else:
+                last_status_json[slug] = data
         time.sleep(POLL_INTERVAL)
 
 
