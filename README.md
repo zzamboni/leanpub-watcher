@@ -102,6 +102,8 @@ python leanpub_watcher.py
 
 The watcher suppresses notifications on the first polling cycle so it can establish a baseline. After that, it notifies only when the formatted status message changes for a given book.
 
+Transient request failures such as missing network connectivity after suspend/resume are ignored. The watcher keeps the last known state and resumes polling silently once connectivity returns.
+
 Examples:
 
 - `3/10 Generating PDF`
@@ -117,6 +119,7 @@ For completed builds, the notification includes an `open` action. If selected, t
 
 - This is designed for a Linux notification environment and is not cross-platform.
 - If Leanpub metadata or cover downloads fail, notifications still work but may not include title/cover enhancements.
+- Temporary network failures do not produce notifications.
 - The Dropbox action depends on Leanpub's `job_type` field and your local Dropbox sync layout matching Leanpub's standard output folders.
 - The script runs indefinitely until stopped.
 

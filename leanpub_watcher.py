@@ -289,7 +289,7 @@ def get_status(slug):
         return r.json()
     except Exception as e:
         debug(f"{slug} status: request failed: {e}")
-        return {"error": redact_text(e)}
+        return None
 
 
 def interpret(status_json):
@@ -368,8 +368,11 @@ def main():
 
     while True:
         for slug in BOOKS:
-            debug(f"---------")
+            debug(f"--------- {slug} ---------")
             data = get_status(slug)
+            if data is None:
+                debug(f"{slug}: skipping status update because request failed")
+                continue
             state = interpret(data)
             prev = last_status.get(slug)
             prev_status_json = last_status_json.get(slug, {})
