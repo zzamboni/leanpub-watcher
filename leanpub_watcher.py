@@ -15,7 +15,7 @@ API_KEY = os.environ['LEANPUB_API_KEY']
 DEFAULT_BOOKS = []
 
 DEFAULT_POLL_INTERVAL = 30
-DEFAULT_NOTIFICATION_TIMEOUT_MS = 5000
+DEFAULT_NOTIFICATION_TIMEOUT_MS = 10000
 DEFAULT_DROPBOX_TYPE = "personal"
 DEFAULT_CONFIG_PATH = os.path.expanduser("~/.config/leanpub-watcher/config.json")
 
@@ -235,6 +235,12 @@ def open_book_folder(slug, status_json):
     debug(f"{slug}: opening Dropbox output path {path}")
     subprocess.Popen(["xdg-open", path])
 
+def open_leanpub_error(slug, status_json):
+    url = f"https://leanpub.com/author/book/{slug}/versions/error_details"
+    
+    debug(f"{slug}: opening Leanpub error page output path {url}")
+    subprocess.Popen(["xdg-open", url])
+
 
 def notify(slug, message, icon=None, extra_args=[]):
     book_title = get_title(slug)
@@ -262,11 +268,16 @@ def notify(slug, message, icon=None, extra_args=[]):
     return result.stdout.strip()
 
 
-def notify_with_action(slug, message, status_json, icon=None):
-    result = notify(slug, message, icon, ["-A", "open=Reveal in Dropbox folder"])
+def notify_with_action(slug, message, status_json, icon=None, actiontitle=None, actionfn=open_book_folder):
+    if actiontitle:
+        actionargs = ["-A", f"action={actiontitle}"]
+    else:
+        actionargs = []
+    result = notify(slug, message, icon, actionargs)
     debug(f"Action selected = {result}")
-    if result == "open":
-        open_book_folder(slug, status_json)
+    
+    if result == "action":
+        actionfn(slug, status_json)
 
 
 def get_status(slug):
@@ -368,18 +379,20 @@ def main():
                 message = format_status(data)
             debug(f"status message: {message}")
 
-            # Avoid notifications on first run
+            # Avoid notifications on first run unless they are different from "unknown"
             if prev is None:
-                last_status[slug] = message
-                last_status_json[slug] = data
-                continue
+                prev = "unknown"
 
             if prev != message:
                 icon = get_cover(slug)
                 if state in {"complete", "unknown"}:
                     completion_status = dict(prev_status_json)
                     completion_status.update(data)
-                    notify_with_action(slug, "Build finished successfully", completion_status, icon)
+                    notify_with_action(slug, "Build finished successfully", completion_status, icon, "Reveal in Dropbox folder", open_book_folder)
+                elif state in {"failed"}:
+                    completion_status = dict(prev_status_json)
+                    completion_status.update(data)
+                    notify_with_action(slug, message, completion_status, icon, "Show error in Leanpub", open_leanpub_error)
                 else:
                     notify(slug, message, icon)
                 last_status[slug] = message

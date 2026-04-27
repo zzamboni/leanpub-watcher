@@ -1,0 +1,11 @@
+{
+  "books": [
+    "learning-hammerspoon",
+    "learning-cfengine",
+    "emacs-org-leanpub",
+    "lit-config"
+  ],
+  "poll_interval": 30,
+  "notification_timeout_ms": 5000,
+  "dropbox_type": "personal"
+}
