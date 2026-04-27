@@ -7,6 +7,7 @@ It polls the Leanpub API for a fixed list of books and sends a desktop notificat
 ## What It Does
 
 - Polls Leanpub build status every 30 seconds
+- Polls active builds more frequently without increasing the polling rate for idle books
 - Watches a configurable list of Leanpub book slugs
 - Sends notifications through `notify-send`
 - Fetches and caches book metadata and cover images under `~/.cache/leanpub-covers`
@@ -32,6 +33,7 @@ You can point it to a different file with `--config /path/to/config.json`.
 
 - `books`
 - `poll_interval`
+- `active_poll_interval`
 - `notification_timeout_ms`
 - `dropbox_type`
 
@@ -65,6 +67,7 @@ Create a config file such as:
     "emacs-org-leanpub"
   ],
   "poll_interval": 30,
+  "active_poll_interval": 5,
   "notification_timeout_ms": 5000,
   "dropbox_type": "personal"
 }
@@ -103,6 +106,8 @@ python leanpub_watcher.py
 The watcher suppresses notifications on the first polling cycle so it can establish a baseline. After that, it notifies only when the formatted status message changes for a given book.
 
 Transient request failures such as missing network connectivity after suspend/resume are ignored. The watcher keeps the last known state and resumes polling silently once connectivity returns.
+
+When a book is in Leanpub's `working` state, only that book is polled at the shorter `active_poll_interval`. Books that are idle, complete, failed, or temporarily unreachable continue using the normal `poll_interval`.
 
 Examples:
 

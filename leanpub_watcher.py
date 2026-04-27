@@ -15,6 +15,7 @@ API_KEY = os.environ['LEANPUB_API_KEY']
 DEFAULT_BOOKS = []
 
 DEFAULT_POLL_INTERVAL = 30
+DEFAULT_ACTIVE_POLL_INTERVAL = 5
 DEFAULT_NOTIFICATION_TIMEOUT_MS = 10000
 DEFAULT_DROPBOX_TYPE = "personal"
 DEFAULT_CONFIG_PATH = os.path.expanduser("~/.config/leanpub-watcher/config.json")
@@ -24,12 +25,14 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 
 BOOKS = list(DEFAULT_BOOKS)
 POLL_INTERVAL = DEFAULT_POLL_INTERVAL
+ACTIVE_POLL_INTERVAL = DEFAULT_ACTIVE_POLL_INTERVAL
 NOTIFICATION_TIMEOUT_MS = DEFAULT_NOTIFICATION_TIMEOUT_MS
 last_status = {}
 last_status_json = {}
 DEBUG = False
 DROPBOX_PATH = None
 DROPBOX_TYPE = DEFAULT_DROPBOX_TYPE
+next_poll_at = {}
 
 
 # -----------------------------
@@ -88,6 +91,7 @@ def load_config(path):
 def apply_config(config):
     global BOOKS
     global POLL_INTERVAL
+    global ACTIVE_POLL_INTERVAL
     global NOTIFICATION_TIMEOUT_MS
     global DROPBOX_TYPE
     global DROPBOX_PATH
@@ -107,6 +111,12 @@ def apply_config(config):
         if not isinstance(poll_interval, int) or poll_interval <= 0:
             raise ValueError("'poll_interval' must be a positive integer")
         POLL_INTERVAL = poll_interval
+
+    active_poll_interval = config.get("active_poll_interval")
+    if active_poll_interval is not None:
+        if not isinstance(active_poll_interval, int) or active_poll_interval <= 0:
+            raise ValueError("'active_poll_interval' must be a positive integer")
+        ACTIVE_POLL_INTERVAL = active_poll_interval
 
     notification_timeout_ms = config.get("notification_timeout_ms")
     if notification_timeout_ms is not None:
@@ -337,6 +347,7 @@ def main():
     global last_status
     global last_status_json
     global DEBUG
+    global next_poll_at
 
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -363,15 +374,25 @@ def main():
     debug(f"config path = {args.config}")
     debug(f"books = {BOOKS}")
     debug(f"poll interval (POLL_INTERVAL) = {POLL_INTERVAL}")
+    debug(f"active poll interval (ACTIVE_POLL_INTERVAL) = {ACTIVE_POLL_INTERVAL}")
     debug(f"notification timeout (NOTIFICATION_TIMEOUT_MS) = {NOTIFICATION_TIMEOUT_MS}")
     debug(f"dropbox type (DROPBOX_TYPE) = {DROPBOX_TYPE}")
 
+    now = time.monotonic()
+    next_poll_at = {slug: now for slug in BOOKS}
+
     while True:
+        now = time.monotonic()
         for slug in BOOKS:
+            due_at = next_poll_at.get(slug, now)
+            if due_at > now:
+                continue
+
             debug(f"--------- {slug} ---------")
             data = get_status(slug)
             if data is None:
                 debug(f"{slug}: skipping status update because request failed")
+                next_poll_at[slug] = now + POLL_INTERVAL
                 continue
             state = interpret(data)
             prev = last_status.get(slug)
@@ -402,7 +423,19 @@ def main():
                 last_status_json[slug] = data
             else:
                 last_status_json[slug] = data
-        time.sleep(POLL_INTERVAL)
+
+            if state == "working":
+                next_poll_at[slug] = now + ACTIVE_POLL_INTERVAL
+            else:
+                next_poll_at[slug] = now + POLL_INTERVAL
+
+        if not next_poll_at:
+            time.sleep(POLL_INTERVAL)
+            continue
+
+        sleep_for = min(next_poll_at.values()) - time.monotonic()
+        if sleep_for > 0:
+            time.sleep(sleep_for)
 
 
 if __name__ == "__main__":

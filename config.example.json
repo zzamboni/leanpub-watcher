@@ -6,6 +6,7 @@
     "lit-config"
   ],
   "poll_interval": 30,
+  "active_poll_interval": 5,
   "notification_timeout_ms": 5000,
   "dropbox_type": "personal"
 }
