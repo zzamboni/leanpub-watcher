@@ -1,4 +1,12 @@
 #!/usr/bin/env python3
+#
+# leanpub-watcher
+#
+# Diego Zamboni, 2026
+#
+# https://github.com/zzamboni/leanpub-watcher
+#
+
 import requests
 import time
 import subprocess
