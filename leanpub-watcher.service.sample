@@ -1,0 +1,10 @@
+[Unit]
+Description=Leanpub watcher
+
+[Service]
+ExecStart=/usr/bin/env python3 /some/dir/leanpub-watcher/leanpub_watcher.py --debug
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
