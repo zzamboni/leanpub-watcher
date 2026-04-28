@@ -10,7 +10,7 @@ import sys
 from datetime import datetime
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-API_KEY = os.environ['LEANPUB_API_KEY']
+API_KEY = os.environ.get("LEANPUB_API_KEY")
 
 DEFAULT_BOOKS = []
 
@@ -51,7 +51,10 @@ def redact_url(url):
 
 
 def redact_text(text):
-    return str(text).replace(API_KEY, "REDACTED")
+    text = str(text)
+    if API_KEY:
+        return text.replace(API_KEY, "REDACTED")
+    return text
 
 
 def debug(message):
@@ -89,12 +92,19 @@ def load_config(path):
 
 
 def apply_config(config):
+    global API_KEY
     global BOOKS
     global POLL_INTERVAL
     global ACTIVE_POLL_INTERVAL
     global NOTIFICATION_TIMEOUT_MS
     global DROPBOX_TYPE
     global DROPBOX_PATH
+
+    api_key = config.get("leanpub_api_key")
+    if api_key is not None:
+        if not isinstance(api_key, str) or not api_key:
+            raise ValueError("'leanpub_api_key' must be a non-empty string")
+        API_KEY = api_key
 
     books = config.get("books")
     if books is not None:
@@ -344,6 +354,7 @@ def format_status(status_json):
 # -----------------------------
 
 def main():
+    global API_KEY
     global last_status
     global last_status_json
     global DEBUG
@@ -369,6 +380,16 @@ def main():
         except Exception as e:
             print(f"Error loading config from {args.config}: {e}", file=sys.stderr)
             sys.exit(1)
+
+    env_api_key = os.environ.get("LEANPUB_API_KEY")
+    if env_api_key:
+        API_KEY = env_api_key
+    if not API_KEY:
+        print(
+            "Missing Leanpub API key. Set LEANPUB_API_KEY or configure 'leanpub_api_key' in the config file.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     debug("debug logging enabled")
     debug(f"config path = {args.config}")
