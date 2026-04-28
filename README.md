@@ -142,7 +142,7 @@ RestartSec=10
 WantedBy=default.target
 ```
 
-Save that as `~/.config/systemd/user/leanpub-watcher.service`, then run:
+A sample file is included in [leanpub-watcher.service.sample](leanpub-watcher.service.sample). Edit the path in the `ExecStart` line, save it as `~/.config/systemd/user/leanpub-watcher.service`, then run:
 
 ```bash
 systemctl --user daemon-reload
