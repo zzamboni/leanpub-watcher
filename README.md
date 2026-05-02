@@ -30,6 +30,7 @@ The watcher reads configuration from a JSON file by default:
 `~/.config/leanpub-watcher/config.json`
 
 You can point it to a different file with `--config /path/to/config.json`.
+The file is reloaded automatically when it changes, so updates take effect without restarting the watcher.
 
 - `leanpub_api_key`
 - `books`
@@ -109,6 +110,8 @@ The watcher notifies only when the formatted status message changes for a given 
 Transient request failures such as missing network connectivity after suspend/resume are ignored. The watcher keeps the last known state and resumes polling silently once connectivity returns.
 
 When a book is in Leanpub's `working` state, only that book is polled at the shorter `active_poll_interval`. Books that are idle, complete, failed, or temporarily unreachable continue using the normal `poll_interval`.
+
+If the config file changes, the watcher reloads it automatically. If the edited file is temporarily invalid, the watcher keeps running with the previous live configuration and logs the reload failure in debug output.
 
 For completed builds, the notification includes an `open` action. If selected, the watcher uses `xdg-open` on the expected Leanpub Dropbox output directory:
 

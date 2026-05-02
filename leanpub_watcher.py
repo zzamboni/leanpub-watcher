@@ -41,6 +41,7 @@ DEBUG = False
 DROPBOX_PATH = None
 DROPBOX_TYPE = DEFAULT_DROPBOX_TYPE
 next_poll_at = {}
+CONFIG_MTIME = None
 
 
 # -----------------------------
@@ -99,6 +100,64 @@ def load_config(path):
     return data
 
 
+def get_config_mtime(path):
+    try:
+        return os.path.getmtime(path)
+    except FileNotFoundError:
+        return None
+
+
+def reset_runtime_config():
+    global API_KEY
+    global BOOKS
+    global POLL_INTERVAL
+    global ACTIVE_POLL_INTERVAL
+    global NOTIFICATION_TIMEOUT_MS
+    global DROPBOX_TYPE
+    global DROPBOX_PATH
+
+    API_KEY = None
+    BOOKS = list(DEFAULT_BOOKS)
+    POLL_INTERVAL = DEFAULT_POLL_INTERVAL
+    ACTIVE_POLL_INTERVAL = DEFAULT_ACTIVE_POLL_INTERVAL
+    NOTIFICATION_TIMEOUT_MS = DEFAULT_NOTIFICATION_TIMEOUT_MS
+    DROPBOX_TYPE = DEFAULT_DROPBOX_TYPE
+    DROPBOX_PATH = None
+
+
+def snapshot_runtime_config():
+    return {
+        "API_KEY": API_KEY,
+        "BOOKS": list(BOOKS),
+        "POLL_INTERVAL": POLL_INTERVAL,
+        "ACTIVE_POLL_INTERVAL": ACTIVE_POLL_INTERVAL,
+        "NOTIFICATION_TIMEOUT_MS": NOTIFICATION_TIMEOUT_MS,
+        "DROPBOX_TYPE": DROPBOX_TYPE,
+        "DROPBOX_PATH": DROPBOX_PATH,
+        "CONFIG_MTIME": CONFIG_MTIME,
+    }
+
+
+def restore_runtime_config(snapshot):
+    global API_KEY
+    global BOOKS
+    global POLL_INTERVAL
+    global ACTIVE_POLL_INTERVAL
+    global NOTIFICATION_TIMEOUT_MS
+    global DROPBOX_TYPE
+    global DROPBOX_PATH
+    global CONFIG_MTIME
+
+    API_KEY = snapshot["API_KEY"]
+    BOOKS = snapshot["BOOKS"]
+    POLL_INTERVAL = snapshot["POLL_INTERVAL"]
+    ACTIVE_POLL_INTERVAL = snapshot["ACTIVE_POLL_INTERVAL"]
+    NOTIFICATION_TIMEOUT_MS = snapshot["NOTIFICATION_TIMEOUT_MS"]
+    DROPBOX_TYPE = snapshot["DROPBOX_TYPE"]
+    DROPBOX_PATH = snapshot["DROPBOX_PATH"]
+    CONFIG_MTIME = snapshot["CONFIG_MTIME"]
+
+
 def apply_config(config):
     global API_KEY
     global BOOKS
@@ -148,6 +207,73 @@ def apply_config(config):
             raise ValueError("'dropbox_type' must be 'personal' or 'business'")
         DROPBOX_TYPE = dropbox_type
         DROPBOX_PATH = None
+
+
+def sync_book_state():
+    global last_status
+    global last_status_json
+    global next_poll_at
+
+    current_books = set(BOOKS)
+    last_status = {slug: status for slug, status in last_status.items() if slug in current_books}
+    last_status_json = {
+        slug: status_json for slug, status_json in last_status_json.items() if slug in current_books
+    }
+
+    now = time.monotonic()
+    next_poll_at = {
+        slug: due_at for slug, due_at in next_poll_at.items() if slug in current_books
+    }
+    for slug in BOOKS:
+        next_poll_at.setdefault(slug, now)
+
+
+def load_and_apply_config(config_path, *, is_reload=False):
+    global API_KEY
+    global CONFIG_MTIME
+
+    snapshot = snapshot_runtime_config()
+    try:
+        reset_runtime_config()
+
+        if os.path.exists(config_path):
+            apply_config(load_config(config_path))
+            CONFIG_MTIME = get_config_mtime(config_path)
+        else:
+            CONFIG_MTIME = None
+
+        env_api_key = os.environ.get("LEANPUB_API_KEY")
+        if env_api_key:
+            API_KEY = env_api_key
+
+        if not API_KEY:
+            raise ValueError(
+                "Missing Leanpub API key. Set LEANPUB_API_KEY or configure 'leanpub_api_key' in the config file."
+            )
+
+        sync_book_state()
+        if is_reload:
+            debug(
+                "Reloaded config: "
+                f"books={BOOKS}, poll_interval={POLL_INTERVAL}, "
+                f"active_poll_interval={ACTIVE_POLL_INTERVAL}, "
+                f"notification_timeout_ms={NOTIFICATION_TIMEOUT_MS}, "
+                f"dropbox_type={DROPBOX_TYPE}"
+            )
+    except Exception:
+        restore_runtime_config(snapshot)
+        raise
+
+
+def reload_config_if_changed(config_path):
+    current_mtime = get_config_mtime(config_path)
+    if current_mtime == CONFIG_MTIME:
+        return
+
+    try:
+        load_and_apply_config(config_path, is_reload=True)
+    except Exception as e:
+        debug(f"Config reload failed for {config_path}: {e}")
 
 
 def get_dropbox_path():
@@ -382,19 +508,11 @@ def main():
     args = parser.parse_args()
     DEBUG = args.debug
 
-    if os.path.exists(args.config):
-        try:
-            apply_config(load_config(args.config))
-        except Exception as e:
-            print(f"Error loading config from {args.config}: {e}", file=sys.stderr)
-            sys.exit(1)
-
-    env_api_key = os.environ.get("LEANPUB_API_KEY")
-    if env_api_key:
-        API_KEY = env_api_key
-    if not API_KEY:
+    try:
+        load_and_apply_config(args.config)
+    except Exception as e:
         print(
-            "Missing Leanpub API key. Set LEANPUB_API_KEY or configure 'leanpub_api_key' in the config file.",
+            f"Error loading config from {args.config}: {e}",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -407,10 +525,8 @@ def main():
     debug(f"notification timeout (NOTIFICATION_TIMEOUT_MS) = {NOTIFICATION_TIMEOUT_MS}")
     debug(f"dropbox type (DROPBOX_TYPE) = {DROPBOX_TYPE}")
 
-    now = time.monotonic()
-    next_poll_at = {slug: now for slug in BOOKS}
-
     while True:
+        reload_config_if_changed(args.config)
         now = time.monotonic()
         for slug in BOOKS:
             due_at = next_poll_at.get(slug, now)
